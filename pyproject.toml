@@ -1,0 +1,41 @@
+[project]
+name = "coursebook-digest"
+version = "0.1.0"
+description = "教材方法库：把整本教材蒸馏成结构化方法卡片，作答时优先注入课本的逻辑与运算技巧（面向大学应试、按课程隔离）"
+readme = "README.md"
+requires-python = ">=3.11"
+# 以下依赖 firpro 环境均已具备；optional 项按需自行安装
+dependencies = [
+    "openai>=1.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "PyYAML>=6.0",
+    "chromadb>=1.0",
+    # pypdf 仅用于"统计 PDF 页数以支持自动分片"，不参与文本解析（文本兜底已移除）
+    "pypdf>=4.0",
+    "onnxruntime>=1.15",
+    "typer>=0.12",
+    "tenacity>=8.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# 生产级教材解析：公式、扫描件、复杂排版（体积大，用户自行安装）
+formula = ["mineru>=2.0"]
+# 更准确的中文分词检索（可选；不装也有内置回退分词）
+tokenize = ["jieba>=0.42"]
+# R2 Web 服务（api_server.py / coursebook serve）：firpro 通常已含
+web = ["fastapi>=0.110", "uvicorn>=0.27"]
+
+[project.scripts]
+coursebook = "coursebook_digest.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["coursebook_digest*"]
+
+[tool.coverage.run]
+source = ["coursebook_digest"]

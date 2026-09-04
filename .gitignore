@@ -1,0 +1,13 @@
+# 运行产物
+# data/courses/*.jsonl 是蒸馏成果，需入库；chroma 向量库可由 jsonl 重建，users 为个人使用数据，不入库
+data/chroma/
+data/users/
+.env
+*.pyc
+__pycache__/
+mineru_out/
+.smoke/
+# 沙箱下 tempfile 偶发的 ACL 缺陷遗留空目录
+cb-smoke-*/
+# 数据备份文件
+*.bak-*
