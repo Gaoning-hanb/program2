@@ -209,8 +209,14 @@ def lexical_score(question: str, card: MethodCard) -> float:
     if not q_tokens:
         return 0.0
     # 1) 关键词命中率（权重最高，因为 keywords 是“检索友好”字段）
-    kw_hits = len(q_tokens & set(k.lower() for k in card.keywords))
-    kw_score = kw_hits / len(q_tokens) if q_tokens else 0.0
+    #    关键词同样走 _tokenize 再取并集：否则整串匹配对不上二元组 token，
+    #    多字中文关键词（“速率单调调度”）与多词英文关键词（"rate monotonic
+    #    scheduling"）将永远无法命中——蒸馏产出的关键词绝大多数是这两种形态。
+    kw_tokens: set[str] = set()
+    for k in card.keywords:
+        kw_tokens.update(_tokenize(k))
+    kw_hits = len(q_tokens & kw_tokens)
+    kw_score = kw_hits / len(q_tokens)
     # 2) 主题与正文二元组余弦
     text = " ".join([card.topic, card.applicability, " ".join(card.steps),
                      " ".join(card.keywords), card.technique])
