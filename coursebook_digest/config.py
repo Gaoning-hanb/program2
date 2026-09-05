@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     # ---- 检索 ----
     top_k_default: int = 5
 
+    # ---- B站视频（coursebook video）----
+    bili_sessdata: str = Field(
+        default="",
+        validation_alias=AliasChoices("BILIBILI_SESSDATA", "BILI_SESSDATA"),
+        description="B站登录 cookie（SESSDATA）；取 AI 字幕更稳，留空则匿名抓取（CC 字幕通常可用）",
+    )
+    whisper_model: str = Field(
+        default="small",
+        validation_alias=AliasChoices("WHISPER_MODEL"),
+        description="无字幕视频的本地转写模型：tiny/base/small/medium（GPU 自动优先，CPU 兜底）",
+    )
+
     # ---- 蒸馏（提速相关）----
     strip_extraneous: bool = Field(
         default=True,

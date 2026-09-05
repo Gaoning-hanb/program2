@@ -11,3 +11,6 @@ mineru_out/
 cb-smoke-*/
 # 数据备份文件
 *.bak-*
+# 视频转写缓存与生成的笔记导图（均可由课程卡片重建）
+data/transcripts/
+notes/

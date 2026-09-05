@@ -2,9 +2,11 @@
 
 一条命令闭环：
     coursebook ingest  <教材.pdf|.md|.txt> --course 课程名          # 解析+蒸馏+入库+建向量
+    coursebook video   <B站链接>          --course 课程名          # 视频字幕/转写→蒸馏入库（独立成课）
     coursebook parse   <教材.pdf>          --course 课程名          # 只切章节，输出文本供人工抽查
     coursebook find    "<题目>"            --course 课程名          # 检索命中的方法卡片
     coursebook ask     "<题目>"            --course 课程名          # 检索+优先注入课本方法作答
+    coursebook notes   --course 课程名                              # 思维导图 + 章节复习笔记
     coursebook courses / env                                        # 课程列表 / 环境自检
 """
 from __future__ import annotations
@@ -332,6 +334,165 @@ def ask(
 
 
 @app.command()
+def video(
+    url: str = typer.Argument(
+        ..., help="B站视频链接（单P或多P系列均可；多P每个P作为一章，整个系列独立成课）"),
+    course: str = typer.Option(
+        ..., "--course", "-c", help="课程名（视频系列独立命名，如「操作系统-王道」）"),
+    parts: str = typer.Option(
+        "", "--parts", help="只处理指定分P，如 '1-3,5'（默认全部）"),
+    whisper_model: str = typer.Option(
+        "", "--whisper-model",
+        help="无字幕分P的本地转写模型 tiny/base/small/medium（默认 .env WHISPER_MODEL）"),
+    skip_whisper: bool = typer.Option(
+        False, "--skip-whisper", is_flag=True, help="无字幕的分P直接跳过，不做本地转写"),
+    transcript_only: bool = typer.Option(
+        False, "--transcript-only", is_flag=True,
+        help="只取字幕/转写并落盘 data/transcripts/，不蒸馏入库（预检字幕质量用）"),
+    parallel: int = typer.Option(0, "--parallel", help="蒸馏并发分块数（0=按 .env）"),
+) -> None:
+    """B站视频 → 字幕/本地转写 → 蒸馏方法卡片 → 入库。
+
+    字幕优先（B站 CC/AI 字幕秒级拿到），无字幕分P自动回退 faster-whisper
+    本地转写（GPU 优先）。卡片溯源到 P号+时间点，notes 可一键跳回视频原时刻。
+    """
+    import json as _json
+
+    from .distill import flag_noise_cards as _flag_noise
+    from .parser import Chapter as _Chapter
+    from .video import (VIDEO_SYSTEM_PROMPT, VideoPart, attach_source,
+                        extract_bvid, fetch_part_subtitles, list_parts,
+                        parse_json3, parse_parts_spec, segments_to_text,
+                        transcribe_part)
+
+    settings = get_settings()
+    settings.ensure_dirs()
+    bvid = extract_bvid(url)
+    # 先粗解析 --parts：只用于提前终止逐P探测（风控兜底路径可省几分钟）
+    try:
+        rough = parse_parts_spec(parts, 10 ** 6)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2)
+    stop_after = max(rough) if rough else None
+    try:
+        meta = list_parts(url, settings.bili_sessdata, stop_after=stop_after)
+    except (RuntimeError, ValueError) as exc:
+        typer.echo(f"无法读取视频信息：{exc}", err=True)
+        raise typer.Exit(1)
+    total = len(meta)
+    try:
+        wanted = parse_parts_spec(parts, total)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2)
+    sel = [m for m in meta if wanted is None or m["part_no"] in wanted]
+    typer.echo(f"视频 {bvid}：共 {total} 个分P，本次处理 {len(sel)} 个")
+
+    # ---- 1) 转写：B站字幕优先，whisper 兜底；结果落盘可复用 ---- #
+    workdir = Path(settings.data_dir) / "transcripts" / course
+    workdir.mkdir(parents=True, exist_ok=True)
+    wm = whisper_model or settings.whisper_model
+    model_cache: dict = {}
+    transcripts: list[dict] = []
+
+    def _load_or_fetch(m: dict) -> dict | None:
+        pno, title = m["part_no"], m["title"]
+        cache = workdir / f"p{pno}.json"
+        if cache.exists():
+            d = _json.loads(cache.read_text(encoding="utf-8"))
+            typer.echo(f"  [复用] P{pno} 已有转写（{d['source']}，{len(d['text'])} 字）")
+            return d
+        try:
+            sub_file, real_title = fetch_part_subtitles(
+                bvid, pno, workdir, settings.bili_sessdata)
+        except RuntimeError as exc:
+            typer.echo(f"  [警告] P{pno} 字幕抓取失败：{exc}", err=True)
+            sub_file, real_title = None, None
+        if real_title:
+            title = real_title  # 覆盖 flat 列表的占位标题（多P视频拿真实分P名）
+        audio_dur = 0.0
+        if sub_file is not None:
+            segs, lang = parse_json3(sub_file)
+            src = "ai" if ".ai-" in sub_file.name else "cc"
+        elif skip_whisper:
+            typer.echo(f"  [跳过] P{pno} 无字幕（--skip-whisper）")
+            return None
+        else:
+            typer.echo(f"  [转写] P{pno} 无字幕，本地 whisper（{wm}）转写中…")
+            try:
+                segs, audio_dur = transcribe_part(bvid, pno, workdir, wm, model_cache)
+            except RuntimeError as exc:
+                typer.echo(f"  [跳过] P{pno}：{exc}", err=True)
+                return None
+            lang, src = "zh", "whisper"
+            if audio_dur > 60:
+                covered = segs[-1].end if segs else 0.0
+                if covered / audio_dur < 0.85:
+                    typer.echo(
+                        f"  [提示] P{pno} 转写覆盖 {covered/60:.0f}/{audio_dur/60:.0f} 分钟："
+                        "其后无语音（录播课常见：课间音乐/静音段，已自动跳过）")
+        if not segs:
+            typer.echo(f"  [跳过] P{pno} 转写为空")
+            return None
+        text = segments_to_text(segs)
+        d = {"part_no": pno, "title": title, "duration": audio_dur or m["duration"],
+             "source": src, "lang": lang, "text": text}
+        cache.write_text(_json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        return d
+
+    with typer.progressbar(sel, label="取字幕") as bar:
+        for m in bar:
+            d = _load_or_fetch(m)
+            if d:
+                transcripts.append(d)
+    if not transcripts:
+        typer.echo("没有任何分P取得转写（无字幕且未开 whisper？），退出。", err=True)
+        raise typer.Exit(1)
+    n_chars = sum(len(d["text"]) for d in transcripts)
+    typer.echo(f"转写完成：{len(transcripts)}/{len(sel)} 个分P，共 {n_chars} 字"
+               f"（已存 {workdir}，重跑自动复用）")
+    if transcript_only:
+        return
+
+    # ---- 2) 蒸馏：每个分P一章，视频专用 prompt，溯源挂 P号+时间点 ---- #
+    llm = LLMClient(settings)
+    store = CourseStore(course, settings)
+    chunk_chars = settings.distill_chunk_chars
+    workers = parallel if parallel and parallel > 0 else settings.distill_parallel
+    all_cards = []
+    total_new = 0
+    with typer.progressbar(transcripts, label="蒸馏中") as bar:
+        for d in bar:
+            pno, title = d["part_no"], d["title"]
+            safe = "".join(c if c not in '\\/:*?"<>|\r\n' else " " for c in title).strip()
+            ch = _Chapter(course=course, chapter=f"P{pno} {safe}"[:80], text=d["text"])
+            if len(ch.text) < 400:
+                typer.echo(f"  [跳过] P{pno} 过小（{len(ch.text)} 字，疑似片头/空P）")
+                continue
+            cards = distill_chapter(
+                llm, ch, chunk_size=chunk_chars, parallel=workers,
+                system_prompt=VIDEO_SYSTEM_PROMPT)
+            cards = _flag_noise(cards)
+            attach_source(cards, VideoPart(part_no=pno, title=safe,
+                                           duration=d["duration"]), bvid)
+            new = store.save_all(cards)
+            total_new += new
+            all_cards.extend(cards)
+            typer.echo(f"  ✓ P{pno} {safe}: 新 {new} / 累计 {len(all_cards)}")
+    if all_cards:
+        try:
+            VectorStore(course, settings).rebuild(store.load_all())
+            typer.echo("已重建向量索引")
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"（向量索引跳过：{exc}）")
+        typer.echo(f"完成：本课程现有 {len(store.load_all())} 张卡片（本次新增 {total_new}）。"
+                   f"试试：coursebook notes --course {course} 生成思维导图+笔记")
+    else:
+        typer.echo("未蒸馏出任何卡片（转写太短或全是闲聊？）。", err=True)
+
+
+@app.command()
 def noise(
     course: str = typer.Option(..., "--course", "-c"),
     apply: bool = typer.Option(False, "--apply", is_flag=True,
@@ -361,6 +522,41 @@ def noise(
                    f"（可选执行 coursebook reindex --course {course} 以重建向量）")
     else:
         typer.echo("（预览模式：确认无误后加 --apply 真正写入）")
+
+
+@app.command()
+def notes(
+    course: str = typer.Option(..., "--course", "-c", help="课程名"),
+    out_dir: str = typer.Option("", "--out", help="输出目录（默认 notes/<课程名>/）"),
+    cdn: bool = typer.Option(
+        False, "--cdn", is_flag=True,
+        help="思维导图改用 CDN 加载渲染库（默认随附本地脚本，离线可开）"),
+    kinds: str = typer.Option(
+        "", "--kinds", help="只保留指定种类，如 '方法,例题'（默认全部）"),
+) -> None:
+    """生成复习资料：markmap 思维导图（HTML）+ 章节笔记（Markdown）。
+
+    教材课程与视频课程通用；视频卡在笔记里带「跳回原视频时刻」链接。
+    纯代码生成、不调模型、秒出。
+    """
+    from .notes import write_notes
+
+    settings = get_settings()
+    cards = CourseStore(course, settings).load_all()
+    if not cards:
+        typer.echo(f"「{course}」没有卡片：先 coursebook ingest / video 入库。", err=True)
+        raise typer.Exit(1)
+    kind_list = [k.strip() for k in kinds.split("，") if k.strip()] if kinds else None
+    out = Path(out_dir) if out_dir else Path(settings.data_dir).parent / "notes" / course
+    try:
+        written = write_notes(cards, course, out, use_cdn=cdn, kinds=kind_list)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2)
+    for p in written:
+        typer.echo(f"  ✓ {p}")
+    typer.echo(f"已生成 {len(written)} 个文件到 {out}"
+               "（思维导图.html 用浏览器打开；笔记.md 支持 LaTeX 预览的编辑器看公式）")
 
 
 @app.command()

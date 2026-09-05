@@ -6,8 +6,10 @@
 
 ```
 教材(PDF/MD) ──parse──► 章节文本 ──distill(LLM)──► 方法卡片 ──store──► JSONL + Chroma 向量
+B站视频(链接) ──video──► 字幕/转写(带时间戳) ─┘                                  │
                                                                         │
 学生题目 ──find_methods──► Top-K 方法卡片 ──inject(优先于通用知识)──► LLM 作答
+                 └─ notes ──► markmap 思维导图(HTML) + 章节复习笔记(MD，可跳回视频原时刻)
 ```
 
 ## 目录结构
@@ -20,7 +22,9 @@ program2/coursebook-digest/
 │  ├─ llm.py         # OpenAI 兼容客户端（默认 DeepSeek）+ 结构化 JSON 自纠
 │  ├─ parser.py      # mineru 生产级解析（PDF，本地 CLI）+ md/txt 直读，无 pypdf 兜底
 │  ├─ mineru_http.py # 云端解析后端 mineru-http（学校网关，鉴权复用模型 key）
-│  ├─ distill.py     # 分块 → LLM 抽方法卡片 → 去重赋稳定 id
+│  ├─ distill.py     # 分块 → LLM 抽方法卡片 → 去重赋稳定 id（教材/视频双 prompt）
+│  ├─ video.py       # B站视频 → 字幕抓取/whisper转写 → 时间戳锚点章节（视频教材源）
+│  ├─ notes.py       # 方法卡片 → markmap 思维导图(HTML) + 章节复习笔记(MD)
 │  ├─ store.py       # 按课程 JSONL + Chroma 集合 + 离线词面嵌入/检索
 │  ├─ retrieve.py    # find_methods：词面分 + 向量分融合排序
 │  ├─ answer.py      # 把命中方法渲染成“优先采用”注入块，再让 LLM 作答
@@ -126,10 +130,62 @@ coursebook env        :: 环境自检
 
 无 API Key 也能测检索：`test_smoke.py`（离线）；`coursebook find` 只检索不调模型。
 
+## B站视频 → 方法卡片（看课自学场景）
+
+很多同学习惯在B站看课程视频自学。`coursebook video` 把**视频当作另一种教材源**：
+贴个链接，自动取字幕（或本地转写）→ 蒸馏成方法卡片 → 入库，之后 `find`/`ask`
+照常检索；`coursebook notes` 还能生成思维导图和复习笔记，**每张卡带时间戳，
+可一键跳回视频原时刻**——纸质教材给不了的复习体验。
+
+```bat
+:: 一条命令：字幕/转写 → 蒸馏 → 入库（视频系列独立成课，不污染教材库）
+coursebook video "https://www.bilibili.com/video/BVxxxxxxxxxx" --course 王道408强化
+
+:: 只处理指定分P（长系列先试一两P看质量）
+coursebook video "https://www.bilibili.com/video/BVxxxxxxxxxx" --course 王道408强化 --parts 2,5-7
+
+:: 生成思维导图 + 复习笔记（纯代码秒出，不调模型）
+coursebook notes --course 王道408强化
+
+:: 照常提问（检索/作答与教材课程完全同构）
+coursebook ask "什么是数据的逻辑结构和存储结构" --course 王道408强化
+```
+
+**字幕获取策略**（自动，无需操心）：
+
+1. **B站字幕优先**：UP主上传的 CC 字幕 / 官方 AI 字幕，秒级拿到。AI 字幕
+   需要登录态——在 `.env` 填 `BILIBILI_SESSDATA`（浏览器登录B站 → F12 →
+   Cookie → 复制 SESSDATA 值）后即可直取；
+2. **whisper 本地转写兜底**：无字幕的分P自动下载音频，用 faster-whisper
+   转写（**GPU 自动优先**，RTX 4050 实测 82 分钟课程约 11 分钟；CPU 也可跑，
+   约与视频等长）。转写文本带 `[mm:ss]` 时间戳锚点，蒸馏出的卡片溯源到
+   `P2 12:35` 这种粒度。
+
+**视频蒸馏的特别处理**：口语转写有同音错字（“真体”→“真题”）、有闲聊噪音
+（求三连/下节预告）——视频专用 prompt 会按上下文纠正术语、剔除编排性内容，
+只留知识点。转写结果缓存在 `data/transcripts/<课程>/`，重跑自动复用，
+断点续跑不重复转写。
+
+**两个实测坑与对策**（王道强化班 44P 系列实测）：
+
+- **录播课含课间音乐**：直播录制的课程视频常带几十分钟课间休息 BGM。
+  转写启用 VAD（语音活动检测）自动跳过无语音段——实测 82 分钟视频只有
+  22 分钟讲授，VAD 只转写讲授部分（墙钟 59s、零音乐幻觉），另有音乐
+  署名类幻觉兜底过滤。若转写覆盖远小于视频时长会打印提示
+  （“转写覆盖 22/83 分钟：其后无语音”），**不是漏转**。
+- **B站风控（412）**：分P列表枚举有三层兜底——yt-dlp flat-playlist
+  （自动带 buvid3/buvid4 指纹 cookie）→ view API → 逐P单视频探测
+  （对风控最宽容，实测严打期仍全通）。指定 `--parts` 时逐P探测只探到
+  所需最大P，大系列不浪费。仍然失败时配 `BILIBILI_SESSDATA` 登录态
+  基本可解。
+
+依赖（仅 video 功能需要）：`pip install yt-dlp faster-whisper nvidia-cublas-cu12`
+（末者为 Windows NVIDIA GPU 加速所需，纯 CPU 可不装；都不装则 video 命令给出明确指引）。
+
 ## 测试
 
 ```bat
-python test_smoke.py      :: 4 项冒烟（存取/幂等、检索优先、蒸馏去重、注入块）
+python test_smoke.py      :: 6 项冒烟（存取/幂等、检索优先、蒸馏去重、注入块、视频时间戳/分P/溯源、导图笔记）
 python test_pipeline.py   :: 6 项端到端集成（章节切分、md/PDF 解析、持久化+向量+融合检索、
                                ask 全链路优先注入、蒸馏链路）——全部离线、无需 key
 ```

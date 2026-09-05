@@ -64,13 +64,16 @@ def distill_chapter(
     max_cards_per_chunk: int = 8,
     chunk_size: int = 6000,
     parallel: int = 1,
+    system_prompt: str | None = None,
 ) -> list[MethodCard]:
     """对一章文本分块蒸馏，汇总、去重、赋稳定 id。
 
     - ``chunk_size``：分块字符数（越大调用次数越少）。
     - ``parallel>1``：并行调用模型处理各块（每块独立 → 可安全并发，墙钟大幅缩短）。
+    - ``system_prompt``：蒸馏规范（默认教材版；视频管线传 video.py 的口语转写版）。
     """
     texts = _chunk_text(chapter.text, size=chunk_size)
+    prompt = system_prompt or SYSTEM_PROMPT
 
     def run(pair: tuple[int, str]) -> list[MethodCard]:
         idx, chunk = pair
@@ -79,7 +82,7 @@ def distill_chapter(
             f"【章节】{chapter.chapter}\n"
             f"【文本片段 {idx}，仅依据此文本】\n{chunk}"
         )
-        data = llm.parse_json(SYSTEM_PROMPT, user)
+        data = llm.parse_json(prompt, user)
         return _cards_from_data(data, chapter.course, chapter.chapter)
 
     if parallel > 1 and len(texts) > 1:

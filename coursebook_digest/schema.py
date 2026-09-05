@@ -36,6 +36,10 @@ class MethodCard(BaseModel):
     worked_example: str = Field(default="", description="代表例题及其关键解法（可选）")
     error_notes: list[str] = Field(default_factory=list, description="易错点/常见坑（可选）")
     source_page: str = Field(default="", description="教材页码/锚点（溯源用）")
+    source_url: str = Field(
+        default="",
+        description="溯源跳转链接（视频卡：跳回原视频对应时刻；教材卡留空）",
+    )
     reference_only: bool = Field(
         default=False,
         description="仅供参考类（教材编排/阅读顺序/指引等），不参与抽查/打卡/考点",
