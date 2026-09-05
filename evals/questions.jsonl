@@ -1,0 +1,20 @@
+{"course": "量子物理", "tag": "直查", "question": "氢原子方位角波函数 Φ(φ) 怎么求解和归一化？为什么 m 只能取整数？", "expect_topics": ["方位角部分波函数Φ(φ)的求解与归一化"]}
+{"course": "量子物理", "tag": "直查", "question": "自旋-轨道耦合能应该怎么计算？", "expect_topics": ["自旋-轨道耦合能的计算"]}
+{"course": "量子物理", "tag": "改写", "question": "In the Stern-Gerlach experiment, what force acts on the atomic magnetic moment in an inhomogeneous magnetic field, and how does the beam split?", "expect_topics": ["施特恩-格拉赫实验：磁矩在不均匀磁场中的受力与偏转"]}
+{"course": "量子物理", "tag": "两跳", "question": "碱金属原子光谱的双线结构是怎么产生的？这个现象和电子自旋概念的提出有什么关系？", "expect_topics": ["自旋磁矩与自旋轨道相互作用的基本概念", "自旋-轨道耦合能的计算"]}
+{"course": "量子物理", "tag": "直查", "question": "纠缠交换的推导：怎么把四个粒子的态按 Bell 基展开并归集？", "expect_topics": ["纠缠交换的代数推导：将四粒子态按Bell基展开并归集"]}
+{"course": "量子物理", "tag": "改写", "question": "请描述 quantum teleportation 量子隐形传态协议的完整流程。", "expect_topics": ["量子隐形传态协议"]}
+{"course": "量子物理", "tag": "直查", "question": "单量子比特门在 Bloch 球上怎么表示成绕轴的旋转？", "expect_topics": ["单量子比特操作的Bloch球旋转表示"]}
+{"course": "量子物理", "tag": "改写", "question": "两个自旋 1/2 粒子体系，S^2 算符在非耦合表象下的矩阵形式是什么？", "expect_topics": ["非耦合表象中总自旋算符S^2的矩阵表示"]}
+{"course": "量子物理", "tag": "两跳", "question": "氢原子的径向方程怎么求解？E>0 和 E<0 两种情况下的解有什么本质区别？", "expect_topics": ["E>0时径向方程的解与连续谱", "E<0时径向方程的解与缔合拉盖尔多项式"]}
+{"course": "量子物理", "tag": "直查", "question": "纯态和混合态分别怎么用密度矩阵表示？怎么区分它们？", "expect_topics": ["纯态与混合态的密度矩阵表示"]}
+{"course": "操作系统", "tag": "直查", "question": "怎么用消息传递机制解决有界缓冲区的生产者消费者问题？", "expect_topics": ["用消息传递解决有界缓冲区生产者消费者问题"]}
+{"course": "操作系统", "tag": "改写", "question": "RPC 里 stub（桩）的作用是什么？客户端和服务端各发生了什么？", "expect_topics": ["远程过程调用（RPC）机制"]}
+{"course": "操作系统", "tag": "直查", "question": "Rate Monotonic 调度算法的优先级分配规则是什么？", "expect_topics": ["Rate Monotonic Scheduling (RMS) 定义与优先级分配规则"]}
+{"course": "操作系统", "tag": "改写", "question": "文件权限里的 setuid 位是干什么用的？举个例子。", "expect_topics": ["SetUID和SetGID权限"]}
+{"course": "操作系统", "tag": "两跳", "question": "分布式系统里避免死锁的“进程启动拒绝”策略是什么？什么时候会拒绝一个新进程启动？", "expect_topics": ["进程启动拒绝（Process Initiation Denial）策略"]}
+{"course": "操作系统", "tag": "直查", "question": "B-tree 的定义和性质有哪些？", "expect_topics": ["B-tree 定义与性质"]}
+{"course": "操作系统", "tag": "改写", "question": "为什么把两层嵌套循环的内外层次序交换一下，缺页次数会差很多？程序该怎么优化？", "expect_topics": ["优化程序以减少页错误"]}
+{"course": "操作系统", "tag": "直查", "question": "Linux 里线程和 clone 系统调用是什么关系？", "expect_topics": ["Linux线程与clone机制"]}
+{"course": "操作系统", "tag": "两跳", "question": "模式切换和进程切换有什么区别？各自的开销如何？", "expect_topics": ["模式切换（mode switch）"]}
+{"course": "操作系统", "tag": "直查", "question": "运行期动态链接（DLL）相比静态链接有什么优点？", "expect_topics": ["运行期动态链接（DLL）及其优点"]}

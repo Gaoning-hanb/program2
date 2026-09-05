@@ -102,6 +102,62 @@ class LLMClient:
             if delta:
                 yield delta
 
+    @retry(
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            APIConnectionError,
+            APITimeoutError,
+            RateLimitError,
+        )),
+    )
+    def chat_with_tools_stream(self, messages: list, tools: list | None = None):
+        """支持 function calling 的流式对话：逐段 yield 事件 dict。
+
+        事件形态：
+        - ``{"type": "delta", "text": "..."}`` —— 内容增量（打字机输出用）
+        - ``{"type": "tool_calls", "tool_calls": [...]}`` —— 本轮模型发起的工具
+          调用（流式累积拼接 arguments 片段后一次性给出，可直接用于执行）。
+
+        调用方约定：先收到若干 delta（可能为空）→ 最后收到二者之一：
+        若模型要调工具则 yield tool_calls 事件（此时忽略零星 delta）；
+        若纯文本作答则流自然结束（调用方自行拼接收到的 delta）。
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.settings.llm_model,
+            "messages": messages,
+            "temperature": self.settings.llm_temperature,
+            "stream": True,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        stream = self._client.chat.completions.create(**kwargs)
+        # tool_calls 按 index 累积：流式时 name/arguments 都可能分多个 chunk 到达
+        pending: dict[int, dict[str, Any]] = {}
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+            if delta.content:
+                yield {"type": "delta", "text": delta.content}
+            for tc in delta.tool_calls or []:
+                slot = pending.setdefault(tc.index, {
+                    "id": "", "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                })
+                if tc.id:
+                    slot["id"] = tc.id
+                if tc.function is not None:
+                    if tc.function.name:
+                        slot["function"]["name"] += tc.function.name
+                    if tc.function.arguments:
+                        slot["function"]["arguments"] += tc.function.arguments
+        if pending:
+            yield {"type": "tool_calls",
+                   "tool_calls": [pending[i] for i in sorted(pending)]}
+
     # ---- 结构化输出 ----
 
     def parse_json_model(

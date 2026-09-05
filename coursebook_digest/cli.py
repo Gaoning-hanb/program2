@@ -278,10 +278,47 @@ def ask(
     course: str = typer.Option(..., "--course", "-c"),
     top_k: int = typer.Option(-1, "--top-k", "-k"),
     methods_json: str | None = typer.Option(None, "--methods-json", help="只输出命中方法卡 JSON 后退出（供 DSH 插件消费）"),
+    agentic: bool = typer.Option(False, "--agentic", is_flag=True,
+                                  help="Agent 模式：模型自主多轮调用检索/读卡工具后再作答（改写题、两跳题召回更好）"),
 ) -> None:
     """检索课本方法 → 优先注入 → LLM 作答。"""
     settings = get_settings()
     k = top_k if top_k > 0 else settings.top_k_default
+    if agentic:
+        from .agent_loop import AgentLoop
+        import sys as _sys
+
+        streamed = {"started": False}
+
+        def _on_delta(text: str) -> None:
+            if not streamed["started"]:
+                streamed["started"] = True
+                typer.echo("\n══ 作答（课本优先 · agent 流式）══")
+            typer.echo(text, nl=False)
+            _sys.stdout.flush()
+
+        def _on_round(round_no: int) -> None:
+            if not streamed["started"]:  # 答案开始后就不再刷状态行
+                typer.echo(f"⏳ Agent 检索/思考中（第 {round_no} 轮）…")
+
+        try:
+            agent = AgentLoop(course, settings=settings, top_k=k)
+            r = agent.run(question, on_delta=_on_delta, on_round=_on_round)
+            if streamed["started"]:
+                typer.echo("")  # 收尾换行
+            else:  # 理论上不会（作答轮必有 delta），兜底整块输出
+                typer.echo("\n══ 作答（课本优先 · agent 模式）══\n")
+                typer.echo(r.answer)
+            typer.echo("\n══ Agent 工具轨迹 ══")
+            for step in r.trace:
+                typer.echo(f"  · {step}")
+            typer.echo(f"（{r.rounds} 轮 / {r.tool_calls} 次工具调用"
+                       + ("，超轮数强制收尾）" if r.forced_final else "）"))
+            if r.round_secs:
+                typer.echo(f"（各轮耗时 {r.round_secs} 秒）")
+            return
+        except Exception as exc:  # noqa: BLE001 —— 新模式失败自动回落老管线
+            typer.echo(f"agent 模式失败（{type(exc).__name__}: {exc}），已回落普通管线。", err=True)
     try:
         answer, methods = ask_question(question, course, top_k=k, settings=settings)
     except ValueError as exc:
